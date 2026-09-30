@@ -14,7 +14,9 @@
     "format:check": "prettier --check .",
     "ci": "npm run lint && npm run typecheck && npm test && npm run build",
     "eval:coach": "tsx evals/coach/run.ts",
-    "mcp": "tsx mcp/server.mts"
+    "mcp": "tsx mcp/server.mts",
+    "sdk:generate": "openapi-typescript openapi/openapi.yaml -o src/sdk/schema.d.ts && prettier --write src/sdk/schema.d.ts",
+    "sdk:check": "npm run sdk:generate && git diff --exit-code src/sdk/schema.d.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.130.0",
@@ -55,7 +57,8 @@
     "tailwindcss": "^3.4.1",
     "tsx": "^4.23.15",
     "typescript": "^5",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "yaml": "^2.9.1"
   },
   "engines": {
     "node": ">=20"
