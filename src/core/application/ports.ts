@@ -2,6 +2,7 @@
 // Adapters (src/adapters/driven/*) implement them. The core never imports an adapter.
 
 import type { Role } from "../domain/access/rbac";
+import type { FlagRules } from "../domain/flags/flags";
 import type { Move, Pokemon, PokemonDetails, PokemonSummary, TeamMember } from "../domain/pokemon/pokemon";
 import type { PrivateContact, Profile } from "../domain/profile/profile";
 
@@ -55,6 +56,17 @@ export interface AuditEntry {
 export interface AuditLog {
   record(entry: AuditEntry): void;
   recent(limit: number): AuditEntry[];
+}
+
+export interface FlagSource {
+  rules(): FlagRules;
+}
+
+// structured logs. 1 event name + fields, the adapter decides the format (json lines here)
+export interface Logger {
+  info(event: string, fields?: Record<string, unknown>): void;
+  warn(event: string, fields?: Record<string, unknown>): void;
+  error(event: string, fields?: Record<string, unknown>): void;
 }
 
 export type Clock = () => number;

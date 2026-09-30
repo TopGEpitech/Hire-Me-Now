@@ -9,6 +9,7 @@ import { activeFighter, playTurn, startBattle, type Battle, type Fighter } from 
 import { cn } from "@/ui/cn";
 import { titleCase } from "@/ui/format";
 import { typeColor } from "@/ui/type-colors";
+import { useFlags } from "@/ui/flags/use-flags";
 import { describeEvent } from "./battle-text";
 
 type Status = "loading" | "no-team" | "error" | "ready";
@@ -18,6 +19,8 @@ const TURN_LOCK_MS = 700;
 
 // pokeapi has back sprites at the same path + /back. the player's mon faces away, like the games
 const backSprite = (sprite: string) => sprite.replace(/\/pokemon\/(\d+)\.png$/, "/pokemon/back/$1.png");
+// behind the "shiny-sprites" flag. off by default, flip it in FEATURE_FLAGS to see it
+const shiny = (sprite: string) => sprite.replace(/\/pokemon\/(back\/)?(\d+)\.png$/, "/pokemon/$1shiny/$2.png");
 
 function HpBar({ fighter }: { fighter: Fighter }) {
   const pct = (fighter.hp / fighter.maxHp) * 100;
@@ -71,6 +74,7 @@ function FighterBox({ fighter, team, label }: { fighter: Fighter; team: Fighter[
 }
 
 export function Arena() {
+  const flags = useFlags();
   const [status, setStatus] = useState<Status>("loading");
   const [battle, setBattle] = useState<Battle | null>(null);
   const [locked, setLocked] = useState(false);
@@ -99,7 +103,7 @@ export function Arena() {
     if (!battle || locked) return;
     // all the rules live in the domain. this component just renders what comes back
     setTurnStart(battle.log.length);
-    setBattle(playTurn(battle, moveIndex));
+    setBattle(playTurn(battle, moveIndex, Math.random, { smartAi: flags["smart-ai"] }));
     setLocked(true);
     timer.current = setTimeout(() => setLocked(false), TURN_LOCK_MS);
   };
@@ -152,7 +156,10 @@ export function Arena() {
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">
       <div className="flex items-center justify-between">
-        <p className="kicker">Turn {battle.turn}</p>
+        <p className="kicker">
+          Turn {battle.turn} · AI: {flags["smart-ai"] ? "smart" : "random"}
+          <span className="normal-case tracking-normal"> (flag smart-ai)</span>
+        </p>
         <Link href="/battle" className="inline-flex items-center gap-1.5 text-sm font-semibold hover:underline">
           <Users className="size-4" /> Edit team
         </Link>
@@ -165,7 +172,7 @@ export function Arena() {
           {/* new key every turn = remount = the shake plays again */}
           <motion.img
             key={`ai-${theirs.id}-${battle.turn}`}
-            src={theirs.sprite}
+            src={flags["shiny-sprites"] ? shiny(theirs.sprite) : theirs.sprite}
             alt={theirs.name}
             className={cn(
               "size-28 [image-rendering:pixelated] sm:size-40",
@@ -178,7 +185,7 @@ export function Arena() {
         <div className="mt-2 flex items-end justify-between gap-4">
           <motion.img
             key={`me-${mine.id}-${battle.turn}`}
-            src={backSprite(mine.sprite)}
+            src={flags["shiny-sprites"] ? shiny(backSprite(mine.sprite)) : backSprite(mine.sprite)}
             onError={(e) => (e.currentTarget.src = mine.sprite)}
             alt={mine.name}
             className={cn(

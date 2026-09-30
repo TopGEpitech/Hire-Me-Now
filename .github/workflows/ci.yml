@@ -40,3 +40,24 @@ jobs:
         run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: 1
+
+  docker:
+    # same image i'd ship to Cloud Run. if it doesn't build or doesn't answer /api/health, CI is red
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t hire-me:ci .
+
+      - name: Smoke test
+        run: |
+          docker run -d --name app -p 8080:8080 -e AUTH_SECRET="$(openssl rand -base64 48)" hire-me:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8080/api/health && exit 0
+            sleep 1
+          done
+          docker logs app
+          exit 1

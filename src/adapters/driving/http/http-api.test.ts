@@ -14,7 +14,20 @@ const login = (accessCode: string, headers: Record<string, string> = {}) =>
 
 function setup() {
   const ctx = testApp();
-  return { ...ctx, http: createHttpApi(ctx.app, { secureCookies: true }) };
+  const logs: Array<Record<string, unknown>> = [];
+  const logger = {
+    info: (event: string, f = {}) => logs.push({ level: "info", event, ...f }),
+    warn: (event: string, f = {}) => logs.push({ level: "warn", event, ...f }),
+    error: (event: string, f = {}) => logs.push({ level: "error", event, ...f }),
+  };
+  let n = 0;
+  const http = createHttpApi(ctx.app, {
+    secureCookies: true,
+    logger,
+    version: "abc1234",
+    newId: () => `generated-id-${++n}`,
+  });
+  return { ...ctx, http, logs };
 }
 
 // grab "hm_session=xxx" out of a set-cookie header
@@ -123,5 +136,63 @@ describe("http api", () => {
       throw new UpstreamError("down");
     };
     expect((await http.pokemon(get("/pokemon/pikachu"), { name: "pikachu" })).status).toBe(502);
+  });
+
+  it("tags every response with a request id + logs 1 line for it", async () => {
+    const { http, logs } = setup();
+    const res = await http.contact(get("/contact"));
+    const id = res.headers.get("x-request-id");
+    expect(id).toBe("generated-id-1");
+    expect(res.headers.get("server-timing")).toMatch(/^app;dur=\d+$/);
+    expect(logs.at(-1)).toMatchObject({
+      event: "http_request",
+      requestId: id,
+      method: "GET",
+      path: "/api/contact",
+      status: 403,
+      role: "visitor",
+    });
+  });
+
+  it("keeps a sane incoming request id, replaces a weird one", async () => {
+    const { http } = setup();
+    const kept = await http.me(get("/me", { "x-request-id": "from-the-gateway-123" }));
+    expect(kept.headers.get("x-request-id")).toBe("from-the-gateway-123");
+    const replaced = await http.me(get("/me", { "x-request-id": "<script>" }));
+    expect(replaced.headers.get("x-request-id")).toBe("generated-id-1");
+  });
+
+  it("logs a crash with the request id + returns it to the client", async () => {
+    const { http, catalog, logs } = setup();
+    catalog.details = async () => {
+      throw new TypeError("oops");
+    };
+    const res = await http.pokemon(get("/pokemon/pikachu"), { name: "pikachu" });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(logs.find((l) => l.event === "unhandled_error")).toMatchObject({ requestId: body.requestId });
+  });
+
+  it("has a health check with the version", async () => {
+    const res = await setup().http.health(get("/health"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: "ok", version: "abc1234" });
+  });
+
+  it("gives you a sticky flag bucket + flags for your role", async () => {
+    const { http } = setup();
+    const first = await http.flags(get("/flags"));
+    expect(await first.json()).toEqual({ "smart-ai": true, "shiny-sprites": false });
+    const bucket = first.headers.get("set-cookie")!.split(";")[0];
+    expect(bucket).toMatch(/^hm_bucket=/);
+
+    // same bucket next time, no new cookie
+    const again = await http.flags(get("/flags", { cookie: bucket }));
+    expect(again.headers.get("set-cookie")).toBeNull();
+
+    // shiny is admin only in the test config
+    const admin = sessionFrom(await http.openSession(login(CODES.admin)));
+    const asAdmin = await http.flags(get("/flags", { cookie: `${admin}; ${bucket}` }));
+    expect((await asAdmin.json())["shiny-sprites"]).toBe(true);
   });
 });

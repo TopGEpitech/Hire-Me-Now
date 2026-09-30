@@ -1,5 +1,6 @@
 import { MemoryAuditLog } from "@/adapters/driven/audit/memory-audit-log";
 import { EnvContactDirectory } from "@/adapters/driven/contact/env-contact-directory";
+import { EnvFlags } from "@/adapters/driven/flags/env-flags";
 import { resume } from "@/adapters/driven/content/resume";
 import { EnvAccessCodes } from "@/adapters/driven/security/env-access-codes";
 import { HmacTokenService } from "@/adapters/driven/security/hmac-token-service";
@@ -67,6 +68,7 @@ export function testApp(opts: { now?: () => number } = {}) {
     profile: { profile: () => resume },
     audit,
     limiter: new MemoryRateLimiter(5, 60_000, clock),
+    flags: new EnvFlags('{"shiny-sprites":{"enabled":true,"roles":["admin"]}}'),
     clock,
   });
   return { app, audit, catalog, tick: (ms: number) => (now += ms) };

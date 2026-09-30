@@ -45,7 +45,8 @@ export const resume: Profile = {
       key: "cloud",
       label: "Cloud / DevOps",
       value: 101,
-      receipt: "Docker + Terraform. Cloud Run on GCP, some AWS. GitHub Actions, feature flags, canary releases.",
+      receipt:
+        "Docker + Terraform. Cloud Run on GCP, some AWS. This repo: a Dockerfile CI builds + smoke tests, feature flags with a % canary, JSON logs with request ids.",
     },
     {
       key: "sec",
@@ -59,7 +60,7 @@ export const resume: Profile = {
       label: "Team",
       value: 120,
       receipt:
-        "Code reviews, PR templates, pair programming. I coached WoW players for 2 years before I coached devs. Same skill, trust me.",
+        "Code reviews, PR templates (there's 1 in this repo), pair programming. I coached WoW players for 2 years before I coached devs. Same skill, trust me.",
     },
   ],
 

@@ -8,6 +8,8 @@ import { HmacTokenService } from "@/adapters/driven/security/hmac-token-service"
 import { MemoryRateLimiter } from "@/adapters/driven/security/memory-rate-limiter";
 import { createHttpApi } from "@/adapters/driving/http/http-api";
 import { createApp } from "@/core/application/app";
+import { EnvFlags } from "@/adapters/driven/flags/env-flags";
+import { JsonLogger } from "@/adapters/driven/logging/json-logger";
 
 // Composition root. The ONLY file that knows which adapter plugs into which port.
 // Want redis for rate limits or postgres for the audit log? change it here, nowhere else
@@ -21,13 +23,17 @@ const Env = z.object({
   ADMIN_ACCESS_CODE: blankIsUnset(z.string().min(12, "ADMIN_ACCESS_CODE: 12 chars min")),
   CONTACT_PHONE: blankIsUnset(z.string()),
   CONTACT_WHATSAPP: blankIsUnset(z.string()),
+  FEATURE_FLAGS: blankIsUnset(z.string()),
+  VERCEL_GIT_COMMIT_SHA: blankIsUnset(z.string()),
 });
 
 // bad config = crash at boot with a clear message, not a weird 500 3 days later
 const env = Env.parse(process.env);
 
+const logger = new JsonLogger(undefined, Date.now, { service: "hire-me" });
+
 if (!env.AUTH_SECRET && env.NODE_ENV === "production" && process.env.NEXT_PHASE !== "phase-production-build") {
-  console.warn("[auth] no AUTH_SECRET, using a random one. sessions won't survive a restart");
+  logger.warn("auth_secret_missing", { note: "using a random one, sessions won't survive a restart" });
 }
 
 export const app = createApp({
@@ -39,7 +45,12 @@ export const app = createApp({
   profile: staticProfile,
   audit: new MemoryAuditLog(200),
   limiter: new MemoryRateLimiter(5, 60_000),
+  flags: new EnvFlags(env.FEATURE_FLAGS, (msg) => logger.warn("feature_flags_invalid", { msg })),
   clock: Date.now,
 });
 
-export const http = createHttpApi(app, { secureCookies: env.NODE_ENV === "production" });
+export const http = createHttpApi(app, {
+  secureCookies: env.NODE_ENV === "production",
+  logger,
+  version: env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7),
+});

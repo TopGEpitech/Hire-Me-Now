@@ -1,10 +1,12 @@
 import type { Role } from "../domain/access/rbac";
+import { evaluateFlags } from "../domain/flags/flags";
 import { GEN_ONE_COUNT } from "../domain/pokemon/pokemon";
 import type {
   AccessCodes,
   AuditLog,
   Clock,
   ContactDirectory,
+  FlagSource,
   PokemonCatalog,
   ProfileSource,
   RateLimiter,
@@ -21,6 +23,7 @@ export interface AppDeps {
   profile: ProfileSource;
   audit: AuditLog;
   limiter: RateLimiter;
+  flags: FlagSource;
   clock: Clock;
 }
 
@@ -41,6 +44,11 @@ export function createApp(deps: AppDeps) {
     revealContact(role: Role) {
       authorize(role, "contact:read");
       return { email: deps.profile.profile().email, ...deps.contacts.privateContact() };
+    },
+
+    // no permission needed: flags only change how things look/behave, never what you can access
+    flagsFor(role: Role, bucketKey: string) {
+      return evaluateFlags(deps.flags.rules(), { role, bucketKey });
     },
 
     readAudit(role: Role, limit = 50) {
