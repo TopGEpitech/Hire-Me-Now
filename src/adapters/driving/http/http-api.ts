@@ -1,6 +1,7 @@
+import { SpanStatusCode, isSpanContextValid, trace, type Span } from "@opentelemetry/api";
 import { z } from "zod";
 import type { App } from "@/core/application/app";
-import type { Clock, Logger } from "@/core/application/ports";
+import type { Clock, Logger, RateLimiter } from "@/core/application/ports";
 import { AccessDenied, InvalidAccessCode, NotFound, TooManyAttempts, UpstreamError } from "@/core/application/errors";
 import { SESSION_TTL_MS, type Viewer } from "@/core/application/use-cases/sessions";
 import { permissionsOf } from "@/core/domain/access/rbac";
@@ -8,6 +9,14 @@ import { GEN_ONE_COUNT } from "@/core/domain/pokemon/pokemon";
 
 // Driving adapter: turns http into use case calls + use case errors into status codes.
 // the next.js route files are 1 liners that point here, so all of this is testable with a plain Request
+
+const tracer = trace.getTracer("hire-me.http");
+
+// links a log line to its trace in grafana. undefined when tracing is off
+function traceIdOf(span: Span) {
+  const ctx = span.spanContext();
+  return isSpanContextValid(ctx) ? ctx.traceId : undefined;
+}
 
 export const SESSION_COOKIE = "hm_session";
 // anonymous + random, only used to keep you in the same feature flag bucket
@@ -73,6 +82,7 @@ interface HttpOptions {
   clock?: Clock;
   version?: string;
   newId?: () => string;
+  hireLimiter?: RateLimiter;
 }
 
 export function createHttpApi(app: App, opts: HttpOptions) {
@@ -95,9 +105,24 @@ export function createHttpApi(app: App, opts: HttpOptions) {
 
   // every route goes through this: request id -> who's calling -> run -> map errors ->
   // clean up a dead cookie -> 1 structured log line. same observability on every endpoint for free
-  const route =
-    <P = void>(handler: (ctx: Ctx<P>) => Response | Promise<Response>) =>
-    async (req: Request, params: P) => {
+  const route = <P = void>(handler: (ctx: Ctx<P>) => Response | Promise<Response>) => {
+    return (req: Request, params: P) =>
+      // 1 span per request. no-op if no otel SDK is registered (tests, local dev)
+      tracer.startActiveSpan(`${req.method} ${new URL(req.url).pathname}`, async (span) => {
+        try {
+          const res = await handle(req, params, span);
+          span.setAttributes({
+            "http.status_code": res.status,
+            "hireme.request_id": res.headers.get("x-request-id") ?? "",
+          });
+          if (res.status >= 500) span.setStatus({ code: SpanStatusCode.ERROR });
+          return res;
+        } finally {
+          span.end();
+        }
+      });
+
+    async function handle(req: Request, params: P, span: Span) {
       const t0 = clock();
       const incoming = req.headers.get("x-request-id");
       const requestId = incoming && REQUEST_ID.test(incoming) ? incoming : newId();
@@ -121,9 +146,11 @@ export function createHttpApi(app: App, opts: HttpOptions) {
         status: res.status,
         durationMs,
         role: viewer.role,
+        traceId: traceIdOf(span),
       });
       return res;
-    };
+    }
+  };
 
   const slug = (value: string) => {
     const parsed = Slug.safeParse(value);
@@ -144,6 +171,16 @@ export function createHttpApi(app: App, opts: HttpOptions) {
         existing === bucket ? {} : { "set-cookie": cookie(bucket, 60 * 60 * 24 * 365, BUCKET_COOKIE) };
       return json(app.flagsFor(viewer.role, bucket), 200, headers);
     }),
+
+    // HIRE button. rate limited like login so nobody spams my slack
+    hire: route(async ({ req, viewer }) => {
+      const gate = opts.hireLimiter?.hit(`hire:${clientKey(req)}`);
+      if (gate && !gate.allowed) throw new TooManyAttempts(gate.retryAfterMs);
+      await app.recordHireClick(viewer.role);
+      return json({ ok: true }, 202);
+    }),
+
+    gymTour: route(({ req }) => json(app.planGymTour(new URL(req.url).searchParams.get("from") ?? "pallet"))),
 
     me: route(({ viewer }) =>
       json({ role: viewer.role, permissions: permissionsOf(viewer.role), expiresAt: viewer.expiresAt }),

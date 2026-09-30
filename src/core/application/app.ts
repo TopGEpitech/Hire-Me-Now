@@ -1,17 +1,20 @@
 import type { Role } from "../domain/access/rbac";
 import { evaluateFlags } from "../domain/flags/flags";
 import { GEN_ONE_COUNT } from "../domain/pokemon/pokemon";
+import { KANTO, planTour } from "../domain/routing/route";
 import type {
   AccessCodes,
   AuditLog,
   Clock,
   ContactDirectory,
+  EventPublisher,
   FlagSource,
   PokemonCatalog,
   ProfileSource,
   RateLimiter,
   TokenService,
 } from "./ports";
+import { NotFound } from "./errors";
 import { makeAuthorize } from "./use-cases/authorize";
 import { openSession, resolveSession } from "./use-cases/sessions";
 
@@ -24,6 +27,7 @@ export interface AppDeps {
   audit: AuditLog;
   limiter: RateLimiter;
   flags: FlagSource;
+  events: EventPublisher;
   clock: Clock;
 }
 
@@ -49,6 +53,18 @@ export function createApp(deps: AppDeps) {
     // no permission needed: flags only change how things look/behave, never what you can access
     flagsFor(role: Role, bucketKey: string) {
       return evaluateFlags(deps.flags.rules(), { role, bucketKey });
+    },
+
+    // the HIRE button on the home page. rate limited by the http layer
+    async recordHireClick(role: Role) {
+      await deps.events.publish({ type: "hire.clicked", at: deps.clock(), role });
+    },
+
+    // shortest gym tour from a town. pure domain, no permission needed (public data)
+    planGymTour(fromId: string) {
+      const start = KANTO.find((s) => s.id === fromId);
+      if (!start) throw new NotFound(`no town "${fromId}"`);
+      return planTour(start, KANTO);
     },
 
     readAudit(role: Role, limit = 50) {

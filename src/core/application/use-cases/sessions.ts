@@ -1,6 +1,6 @@
 import type { Role } from "../../domain/access/rbac";
 import { InvalidAccessCode, TooManyAttempts } from "../errors";
-import type { AccessCodes, AuditLog, Clock, RateLimiter, TokenService } from "../ports";
+import type { AccessCodes, AuditLog, Clock, EventPublisher, RateLimiter, TokenService } from "../ports";
 
 export const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 
@@ -18,6 +18,7 @@ interface OpenSessionDeps {
   tokens: TokenService;
   limiter: RateLimiter;
   audit: AuditLog;
+  events: EventPublisher;
   clock: Clock;
 }
 
@@ -32,6 +33,8 @@ export function openSession(deps: OpenSessionDeps) {
     if (!role) throw new InvalidAccessCode();
 
     const session = { role, expiresAt: deps.clock() + SESSION_TTL_MS };
+    // a recruiter just logged in = i want to know. not awaited, a slow slack never blocks a login
+    deps.events.publish({ type: "session.opened", at: deps.clock(), role }).catch(() => {});
     return { token: await deps.tokens.sign(session), session };
   };
 }

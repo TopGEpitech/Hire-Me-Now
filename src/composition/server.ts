@@ -5,10 +5,12 @@ import { staticProfile } from "@/adapters/driven/content/resume";
 import { PokeApiCatalog } from "@/adapters/driven/pokeapi/pokeapi-catalog";
 import { EnvAccessCodes } from "@/adapters/driven/security/env-access-codes";
 import { HmacTokenService } from "@/adapters/driven/security/hmac-token-service";
+import { CompositeTokenService, OidcTokenVerifier } from "@/adapters/driven/security/oidc-token-verifier";
 import { MemoryRateLimiter } from "@/adapters/driven/security/memory-rate-limiter";
 import { createHttpApi } from "@/adapters/driving/http/http-api";
 import { createApp } from "@/core/application/app";
 import { EnvFlags } from "@/adapters/driven/flags/env-flags";
+import { FanoutPublisher, SignedWebhookPublisher, SlackPublisher } from "@/adapters/driven/events/publishers";
 import { JsonLogger } from "@/adapters/driven/logging/json-logger";
 
 // Composition root. The ONLY file that knows which adapter plugs into which port.
@@ -25,6 +27,11 @@ const Env = z.object({
   CONTACT_WHATSAPP: blankIsUnset(z.string()),
   FEATURE_FLAGS: blankIsUnset(z.string()),
   VERCEL_GIT_COMMIT_SHA: blankIsUnset(z.string()),
+  SLACK_WEBHOOK_URL: blankIsUnset(z.string().url()),
+  WEBHOOK_URL: blankIsUnset(z.string().url()),
+  OIDC_ISSUER: blankIsUnset(z.string().url()),
+  OIDC_AUDIENCE: blankIsUnset(z.string()),
+  WEBHOOK_SECRET: blankIsUnset(z.string().min(16, "WEBHOOK_SECRET: 16 chars min")),
 });
 
 // bad config = crash at boot with a clear message, not a weird 500 3 days later
@@ -36,15 +43,33 @@ if (!env.AUTH_SECRET && env.NODE_ENV === "production" && process.env.NEXT_PHASE 
   logger.warn("auth_secret_missing", { note: "using a random one, sessions won't survive a restart" });
 }
 
+// only the targets that are configured. none = events go nowhere, that's fine
+const eventTargets = [
+  ...(env.SLACK_WEBHOOK_URL ? [{ name: "slack", publisher: new SlackPublisher(env.SLACK_WEBHOOK_URL) }] : []),
+  ...(env.WEBHOOK_URL && env.WEBHOOK_SECRET
+    ? [{ name: "webhook", publisher: new SignedWebhookPublisher(env.WEBHOOK_URL, env.WEBHOOK_SECRET) }]
+    : []),
+];
+
+const hmacTokens = env.AUTH_SECRET ? new HmacTokenService(env.AUTH_SECRET) : HmacTokenService.withRandomSecret();
+// keycloak is optional. set OIDC_ISSUER + OIDC_AUDIENCE and bearer tokens from the realm just work
+const tokens =
+  env.OIDC_ISSUER && env.OIDC_AUDIENCE
+    ? new CompositeTokenService(hmacTokens, [
+        new OidcTokenVerifier({ issuer: env.OIDC_ISSUER, audience: env.OIDC_AUDIENCE }),
+      ])
+    : hmacTokens;
+
 export const app = createApp({
   catalog: new PokeApiCatalog(),
-  tokens: env.AUTH_SECRET ? new HmacTokenService(env.AUTH_SECRET) : HmacTokenService.withRandomSecret(),
+  tokens,
   // a role with no code in env just can't be reached. fail closed
   codes: new EnvAccessCodes({ recruiter: env.RECRUITER_ACCESS_CODE, admin: env.ADMIN_ACCESS_CODE }),
   contacts: new EnvContactDirectory({ phone: env.CONTACT_PHONE, whatsapp: env.CONTACT_WHATSAPP }),
   profile: staticProfile,
   audit: new MemoryAuditLog(200),
   limiter: new MemoryRateLimiter(5, 60_000),
+  events: new FanoutPublisher(eventTargets, logger),
   flags: new EnvFlags(env.FEATURE_FLAGS, (msg) => logger.warn("feature_flags_invalid", { msg })),
   clock: Date.now,
 });
@@ -52,5 +77,6 @@ export const app = createApp({
 export const http = createHttpApi(app, {
   secureCookies: env.NODE_ENV === "production",
   logger,
+  hireLimiter: new MemoryRateLimiter(3, 60_000),
   version: env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7),
 });

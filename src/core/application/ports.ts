@@ -69,5 +69,13 @@ export interface Logger {
   error(event: string, fields?: Record<string, unknown>): void;
 }
 
+// things that happened, pushed to the outside (webhooks, slack...). fire + forget from the core's view
+export type DomainEvent =
+  { type: "hire.clicked"; at: number; role: Role } | { type: "session.opened"; at: number; role: Role };
+
+export interface EventPublisher {
+  publish(event: DomainEvent): Promise<void>;
+}
+
 export type Clock = () => number;
 export type Random = () => number;
