@@ -57,7 +57,9 @@ export function TrainerCard({ profile }: { profile: Profile }) {
 
       <p className="screen mt-3 p-3 text-sm leading-relaxed">
         Often seen near a CI pipeline. When a build turns red, it stays up late until it&apos;s green again
-        <span className="ml-0.5 animate-blink">▌</span>
+        <span aria-hidden className="ml-0.5 animate-blink">
+          ▌
+        </span>
       </p>
     </div>
   );

@@ -63,3 +63,24 @@ describe("guarded use cases", () => {
     expect(catalog.calls).toEqual(["list:151", "list:1"]);
   });
 });
+
+describe("events", () => {
+  it("publishes session.opened on a good login, nothing on a bad one", async () => {
+    const { app, events } = testApp();
+    await app.openSession("nope", "ip").catch(() => {});
+    await app.openSession(CODES.recruiter, "ip");
+    expect(events).toEqual([expect.objectContaining({ type: "session.opened", role: "recruiter" })]);
+  });
+
+  it("publishes hire.clicked", async () => {
+    const { app, events } = testApp();
+    await app.recordHireClick("visitor");
+    expect(events[0]).toMatchObject({ type: "hire.clicked", role: "visitor" });
+  });
+
+  it("plans a gym tour + 404s an unknown town", () => {
+    const { app } = testApp();
+    expect(app.planGymTour("pallet").order[0].id).toBe("pallet");
+    expect(() => app.planGymTour("lavender-nope")).toThrow();
+  });
+});

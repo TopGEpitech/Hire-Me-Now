@@ -1,24 +1,21 @@
 import { NotFound, UpstreamError } from "@/core/application/errors";
 import type { PokemonCatalog } from "@/core/application/ports";
-import type { Move, Pokemon, PokemonDetails, PokemonSummary } from "@/core/domain/pokemon/pokemon";
+import type { Pokemon, PokemonDetails } from "@/core/domain/pokemon/pokemon";
+import { createHireMeClient, type HireMeClient } from "@/sdk/client";
 
-// same port as PokeApiCatalog, but for the browser: it talks to OUR api, not pokeapi.
-// the use cases can't tell the difference + that's exactly the point of a port
+// same port as PokeApiCatalog, but for the browser: it talks to OUR api, through the SDK that's
+// generated from the openapi spec. the use cases can't tell the difference + that's the point of a port
 export class ApiPokemonCatalog implements PokemonCatalog {
-  constructor(
-    private readonly baseUrl = "/api",
-    private readonly fetcher: typeof fetch = (...args) => fetch(...args),
-  ) {}
+  constructor(private readonly api: HireMeClient = createHireMeClient()) {}
 
-  private async getJson<T>(path: string): Promise<T> {
-    const res = await this.fetcher(`${this.baseUrl}${path}`, { credentials: "same-origin" });
-    if (res.status === 404) throw new NotFound(path);
-    if (!res.ok) throw new UpstreamError(`${path} -> ${res.status}`);
-    return res.json() as Promise<T>;
+  private unwrap<T>(res: { data?: T; response: Response }, what: string): T {
+    if (res.response.status === 404) throw new NotFound(what);
+    if (!res.response.ok || res.data === undefined) throw new UpstreamError(`${what} -> ${res.response.status}`);
+    return res.data;
   }
 
-  list(limit: number) {
-    return this.getJson<PokemonSummary[]>(`/pokemon?limit=${limit}`);
+  async list(limit: number) {
+    return this.unwrap(await this.api.GET("/api/pokemon", { params: { query: { limit } } }), "pokemon list");
   }
 
   // details is a superset of Pokemon so 1 endpoint covers both
@@ -26,11 +23,11 @@ export class ApiPokemonCatalog implements PokemonCatalog {
     return this.details(nameOrId);
   }
 
-  details(name: string) {
-    return this.getJson<PokemonDetails>(`/pokemon/${encodeURIComponent(name)}`);
+  async details(name: string): Promise<PokemonDetails> {
+    return this.unwrap(await this.api.GET("/api/pokemon/{name}", { params: { path: { name } } }), name);
   }
 
-  move(name: string) {
-    return this.getJson<Move>(`/moves/${encodeURIComponent(name)}`);
+  async move(name: string) {
+    return this.unwrap(await this.api.GET("/api/moves/{name}", { params: { path: { name } } }), name);
   }
 }

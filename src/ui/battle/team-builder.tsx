@@ -8,6 +8,7 @@ import { pickRival, recruit, teamStore } from "@/composition/browser";
 import { MAX_TEAM_SIZE, matchesSearch, type PokemonSummary, type TeamMember } from "@/core/domain/pokemon/pokemon";
 import { TeamRuleBroken, addToTeam, removeFromTeam } from "@/core/domain/pokemon/team";
 import { cn } from "@/ui/cn";
+import { CoachPanel } from "@/ui/coach/coach-panel";
 import { dexNumber, titleCase } from "@/ui/format";
 import { usePokedex } from "@/ui/pokedex/pokedex-browser";
 import { Pokeball } from "@/ui/primitives/pokeball";
@@ -161,6 +162,8 @@ export function TeamBuilder() {
           );
         })}
       </ol>
+
+      <CoachPanel team={team} />
 
       <div className="mt-10 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-2xl font-extrabold">Pick from gen 1</h2>

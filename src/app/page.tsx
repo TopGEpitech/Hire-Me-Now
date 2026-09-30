@@ -26,9 +26,19 @@ const PROOF = [
     text: "Hexagonal core, ports + adapters, an API with RBAC. There's a playground where you can get a 403 on purpose. Go on.",
   },
   {
+    href: "/architecture#ai",
+    title: "AI coach + MCP",
+    text: "Rates your team from real numbers, streams its answer, switches model if 1 fails. Graded by evals in CI. Also plugs into Claude or Cursor as an MCP server.",
+  },
+  {
+    href: "/architecture#services",
+    title: "Go + Python services",
+    text: "A Go gateway that took 10 000 simulated devices without losing an event, + a Python detector that flags weird telemetry.",
+  },
+  {
     href: "https://github.com/TopGEpitech/Pokedex-Nextjs14",
     title: "Source + CI",
-    text: "Every push runs lint, type check, the tests + a prod build on GitHub Actions. Red CI, no merge.",
+    text: "Every push: lint, types, 150+ tests, go + python tests, AI evals, docker, cypress + axe, k6. Red CI, no merge.",
   },
 ];
 
@@ -41,7 +51,10 @@ export default function HirePage() {
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-8 pt-10 sm:pt-16 lg:grid-cols-[1.15fr_1fr]">
         <div>
           <p className="kicker">
-            Pokédex entry No. 152 <span className="animate-blink">_</span>
+            Pokédex entry No. 152{" "}
+            <span aria-hidden className="animate-blink">
+              _
+            </span>
           </p>
           <h1 className="mt-3 text-5xl font-black leading-[0.95] tracking-tight sm:text-7xl">
             Why you should <span className="bg-accent px-2 [box-decoration-break:clone]">hire me.</span>

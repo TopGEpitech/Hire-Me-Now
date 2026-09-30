@@ -6,3 +6,8 @@ node_modules
 coverage
 docs
 *.md
+services
+cypress
+cypress.config.ts
+load
+evals/out

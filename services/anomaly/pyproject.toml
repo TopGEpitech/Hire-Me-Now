@@ -1,0 +1,12 @@
+[project]
+name = "anomaly"
+version = "1.0.0"
+description = "flags weird battle telemetry coming out of the go gateway"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

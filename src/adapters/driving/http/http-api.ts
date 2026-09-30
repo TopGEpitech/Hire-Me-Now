@@ -1,13 +1,23 @@
+import { SpanStatusCode, isSpanContextValid, trace, type Span } from "@opentelemetry/api";
 import { z } from "zod";
 import type { App } from "@/core/application/app";
-import type { Clock, Logger } from "@/core/application/ports";
+import type { Clock, Logger, RateLimiter } from "@/core/application/ports";
 import { AccessDenied, InvalidAccessCode, NotFound, TooManyAttempts, UpstreamError } from "@/core/application/errors";
 import { SESSION_TTL_MS, type Viewer } from "@/core/application/use-cases/sessions";
+import { MemberSchema } from "@/adapters/schemas/team";
 import { permissionsOf } from "@/core/domain/access/rbac";
-import { GEN_ONE_COUNT } from "@/core/domain/pokemon/pokemon";
+import { GEN_ONE_COUNT, MAX_TEAM_SIZE } from "@/core/domain/pokemon/pokemon";
 
 // Driving adapter: turns http into use case calls + use case errors into status codes.
 // the next.js route files are 1 liners that point here, so all of this is testable with a plain Request
+
+const tracer = trace.getTracer("hire-me.http");
+
+// links a log line to its trace in grafana. undefined when tracing is off
+function traceIdOf(span: Span) {
+  const ctx = span.spanContext();
+  return isSpanContextValid(ctx) ? ctx.traceId : undefined;
+}
 
 export const SESSION_COOKIE = "hm_session";
 // anonymous + random, only used to keep you in the same feature flag bucket
@@ -16,6 +26,27 @@ const REQUEST_ID = /^[a-zA-Z0-9-]{8,64}$/;
 
 const SessionBody = z.object({ accessCode: z.string().trim().min(1).max(128) });
 const Slug = z.string().regex(/^[a-z0-9-]{1,40}$/i);
+
+const Side = z.enum(["player", "ai"]);
+const LogEvent = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("attack"),
+    side: Side,
+    pokemon: z.string().max(40),
+    move: z.object({ name: z.string().max(40), type: z.string().max(20), power: z.number().nullable() }),
+    damage: z.number().min(0),
+    multiplier: z.number().min(0),
+  }),
+  z.object({ kind: z.literal("faint"), side: Side, pokemon: z.string().max(40) }),
+  z.object({ kind: z.literal("send-out"), side: Side, pokemon: z.string().max(40) }),
+  z.object({ kind: z.literal("win"), side: Side }),
+]);
+
+const CoachBody = z.object({
+  team: z.array(MemberSchema).min(1).max(MAX_TEAM_SIZE),
+  // battle log is optional + capped, nobody needs to send me 10MB
+  log: z.array(LogEvent).max(400).default([]),
+});
 
 // pokemon data is the same for every role that can read it, so the browser can keep it a bit
 const BROWSER_CACHE = { "cache-control": "private, max-age=3600" };
@@ -73,6 +104,8 @@ interface HttpOptions {
   clock?: Clock;
   version?: string;
   newId?: () => string;
+  hireLimiter?: RateLimiter;
+  coachLimiter?: RateLimiter;
 }
 
 export function createHttpApi(app: App, opts: HttpOptions) {
@@ -95,9 +128,24 @@ export function createHttpApi(app: App, opts: HttpOptions) {
 
   // every route goes through this: request id -> who's calling -> run -> map errors ->
   // clean up a dead cookie -> 1 structured log line. same observability on every endpoint for free
-  const route =
-    <P = void>(handler: (ctx: Ctx<P>) => Response | Promise<Response>) =>
-    async (req: Request, params: P) => {
+  const route = <P = void>(handler: (ctx: Ctx<P>) => Response | Promise<Response>) => {
+    return (req: Request, params: P) =>
+      // 1 span per request. no-op if no otel SDK is registered (tests, local dev)
+      tracer.startActiveSpan(`${req.method} ${new URL(req.url).pathname}`, async (span) => {
+        try {
+          const res = await handle(req, params, span);
+          span.setAttributes({
+            "http.status_code": res.status,
+            "hireme.request_id": res.headers.get("x-request-id") ?? "",
+          });
+          if (res.status >= 500) span.setStatus({ code: SpanStatusCode.ERROR });
+          return res;
+        } finally {
+          span.end();
+        }
+      });
+
+    async function handle(req: Request, params: P, span: Span) {
       const t0 = clock();
       const incoming = req.headers.get("x-request-id");
       const requestId = incoming && REQUEST_ID.test(incoming) ? incoming : newId();
@@ -121,9 +169,11 @@ export function createHttpApi(app: App, opts: HttpOptions) {
         status: res.status,
         durationMs,
         role: viewer.role,
+        traceId: traceIdOf(span),
       });
       return res;
-    };
+    }
+  };
 
   const slug = (value: string) => {
     const parsed = Slug.safeParse(value);
@@ -144,6 +194,49 @@ export function createHttpApi(app: App, opts: HttpOptions) {
         existing === bucket ? {} : { "set-cookie": cookie(bucket, 60 * 60 * 24 * 365, BUCKET_COOKIE) };
       return json(app.flagsFor(viewer.role, bucket), 200, headers);
     }),
+
+    // HIRE button. rate limited like login so nobody spams my slack
+    hire: route(async ({ req, viewer }) => {
+      const gate = opts.hireLimiter?.hit(`hire:${clientKey(req)}`);
+      if (gate && !gate.allowed) throw new TooManyAttempts(gate.retryAfterMs);
+      await app.recordHireClick(viewer.role);
+      return json({ ok: true }, 202);
+    }),
+
+    // server-sent events: delta / fallback / diagnosis / done. 1 POST, then the answer streams in
+    coach: route(async ({ req, viewer }) => {
+      if (!req.headers.get("content-type")?.includes("application/json")) return json({ error: "json_only" }, 415);
+      const body = CoachBody.safeParse(await req.json().catch(() => null));
+      if (!body.success) return json({ error: "bad_request" }, 400);
+      // costs real tokens, so it's rate limited per client
+      const gate = opts.coachLimiter?.hit(`coach:${clientKey(req)}`);
+      if (gate && !gate.allowed) throw new TooManyAttempts(gate.retryAfterMs);
+
+      const enc = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(controller) {
+          const send = (event: string, data: unknown) =>
+            controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          try {
+            await app.coachTeam(viewer.role, body.data.team, body.data.log, (e) => {
+              if (e.kind === "delta") send("delta", { text: e.text });
+              else if (e.kind === "fallback") send("fallback", { from: e.from, to: e.to });
+              else send("diagnosis", { model: e.model, ...e.diagnosis });
+            });
+          } catch (error) {
+            send("error", { error: error instanceof AccessDenied ? "forbidden" : "internal" });
+          } finally {
+            send("done", {});
+            controller.close();
+          }
+        },
+      });
+      return new Response(stream, {
+        headers: { "content-type": "text/event-stream", "cache-control": "no-store", "x-accel-buffering": "no" },
+      });
+    }),
+
+    gymTour: route(({ req }) => json(app.planGymTour(new URL(req.url).searchParams.get("from") ?? "pallet"))),
 
     me: route(({ viewer }) =>
       json({ role: viewer.role, permissions: permissionsOf(viewer.role), expiresAt: viewer.expiresAt }),

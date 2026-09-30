@@ -13,33 +13,82 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  NEXT_TELEMETRY_DISABLED: 1
+
 jobs:
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-
       - run: npm ci
 
       - name: Lint (incl. hexagon boundaries)
         run: npm run lint
-
       - name: Typecheck
         run: npm run typecheck
-
       - name: Tests
         run: npm test
-
+      - name: Generated SDK matches the OpenAPI spec
+        run: npm run sdk:check
       - name: Build
         run: npm run build
+
+  ai-eval:
+    # rule baseline always runs. claude runs too when the ANTHROPIC_API_KEY secret is set (costs a few cents)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run eval:coach
         env:
-          NEXT_TELEMETRY_DISABLED: 1
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coach-eval
+          path: evals/out/
+
+  go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/telemetry-gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - name: Tests (race detector, incl. the 10 000 devices test)
+        run: go test -race -count=1 ./...
+
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/anomaly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest==8.3.4
+      - run: python -m pytest -q
 
   docker:
     # same image i'd ship to Cloud Run. if it doesn't build or doesn't answer /api/health, CI is red
@@ -48,10 +97,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
       - name: Build image
         run: docker build -t hire-me:ci .
-
       - name: Smoke test
         run: |
           docker run -d --name app -p 8080:8080 -e AUTH_SECRET="$(openssl rand -base64 48)" hire-me:ci
@@ -61,3 +108,53 @@ jobs:
           done
           docker logs app
           exit 1
+
+  e2e:
+    # cypress + axe (WCAG 2.1 AA) against a real production build
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AUTH_SECRET: ci-only-secret-that-is-long-enough-000000
+      RECRUITER_ACCESS_CODE: ci-recruiter-code
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # cypress isn't a project dependency (it's 500MB, Vercel + docker don't need it)
+      - run: npm i --no-save cypress@13 cypress-axe@1 axe-core@4
+      - run: npm run build
+      - name: Start server (same standalone server as the docker image)
+        run: |
+          cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+          PORT=3000 node .next/standalone/server.js > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://localhost:3000/api/health && break; sleep 1; done
+      - run: npx cypress run
+      - if: failure()
+        run: cat server.log
+
+  load:
+    # k6: 20 virtual users for 30s, p95 < 500ms + < 1% errors or it fails
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AUTH_SECRET: ci-only-secret-that-is-long-enough-000000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Start server (same standalone server as the docker image)
+        run: |
+          cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+          PORT=3000 node .next/standalone/server.js > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://localhost:3000/api/health && break; sleep 1; done
+      - uses: grafana/setup-k6-action@v1
+      - run: k6 run -e BASE_URL=http://localhost:3000 load/k6-smoke.js

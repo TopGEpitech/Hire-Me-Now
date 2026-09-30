@@ -7,7 +7,7 @@ import { HmacTokenService } from "@/adapters/driven/security/hmac-token-service"
 import { MemoryRateLimiter } from "@/adapters/driven/security/memory-rate-limiter";
 import { createApp } from "@/core/application/app";
 import { NotFound } from "@/core/application/errors";
-import type { PokemonCatalog } from "@/core/application/ports";
+import type { DomainEvent, PokemonCatalog } from "@/core/application/ports";
 import type { Move, Pokemon, PokemonDetails } from "@/core/domain/pokemon/pokemon";
 
 export const CODES = { recruiter: "recruiter-test-code", admin: "admin-test-code-123" };
@@ -60,6 +60,7 @@ export function testApp(opts: { now?: () => number } = {}) {
   const clock = opts.now ?? (() => now);
   const audit = new MemoryAuditLog(50);
   const catalog = new FakeCatalog();
+  const events: DomainEvent[] = [];
   const app = createApp({
     catalog,
     tokens: new HmacTokenService(SECRET),
@@ -68,8 +69,11 @@ export function testApp(opts: { now?: () => number } = {}) {
     profile: { profile: () => resume },
     audit,
     limiter: new MemoryRateLimiter(5, 60_000, clock),
+    events: { publish: async (e) => void events.push(e) },
+    coachModels: [],
+    logger: { info() {}, warn() {}, error() {} },
     flags: new EnvFlags('{"shiny-sprites":{"enabled":true,"roles":["admin"]}}'),
     clock,
   });
-  return { app, audit, catalog, tick: (ms: number) => (now += ms) };
+  return { app, audit, catalog, events, tick: (ms: number) => (now += ms) };
 }

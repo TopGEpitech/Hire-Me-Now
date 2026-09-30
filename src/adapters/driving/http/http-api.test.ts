@@ -36,7 +36,10 @@ const sessionFrom = (res: Response) => res.headers.get("set-cookie")!.split(";")
 describe("http api", () => {
   it("says you're a visitor when you have no session", async () => {
     const res = await setup().http.me(get("/me"));
-    expect(await res.json()).toMatchObject({ role: "visitor", permissions: ["profile:read", "pokedex:read"] });
+    expect(await res.json()).toMatchObject({
+      role: "visitor",
+      permissions: ["profile:read", "pokedex:read", "coach:use"],
+    });
   });
 
   it("answers 403 on contact for a visitor, with what's missing", async () => {
@@ -194,5 +197,41 @@ describe("http api", () => {
     const admin = sessionFrom(await http.openSession(login(CODES.admin)));
     const asAdmin = await http.flags(get("/flags", { cookie: `${admin}; ${bucket}` }));
     expect((await asAdmin.json())["shiny-sprites"]).toBe(true);
+  });
+});
+
+describe("coach endpoint (sse)", () => {
+  const post = (body: unknown) =>
+    new Request("http://localhost/api/coach", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const team = [
+    {
+      id: 6,
+      name: "charizard",
+      sprite: "/6.png",
+      types: ["fire", "flying"],
+      stats: { hp: 78, attack: 84, defense: 78, specialAttack: 109, specialDefense: 85, speed: 100 },
+      moves: [{ name: "flamethrower", type: "fire", power: 90 }],
+    },
+  ];
+
+  it("streams a diagnosis as server-sent events (rule coach when no model is set)", async () => {
+    const res = await setup().http.coach(post({ team }));
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    const text = await res.text();
+    const events = [...text.matchAll(/event: (\w+)\ndata: (.*)\n\n/g)].map((m) => ({ e: m[1], d: JSON.parse(m[2]) }));
+    expect(events.map((x) => x.e)).toEqual(["diagnosis", "done"]);
+    expect(events[0].d).toMatchObject({ model: "rules", verdict: "weak" });
+    expect(events[0].d.threats.map((t: { type: string }) => t.type)).toContain("rock");
+  });
+
+  it("400s on a bad team or a bad log", async () => {
+    const { http } = setup();
+    expect((await http.coach(post({ team: [] }))).status).toBe(400);
+    expect((await http.coach(post({ team, log: [{ kind: "attack", damage: "lots" }] }))).status).toBe(400);
+    expect((await http.coach(post({ team: Array(7).fill(team[0]) }))).status).toBe(400);
   });
 });

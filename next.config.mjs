@@ -13,7 +13,11 @@ const nextConfig = {
   // small self contained server for the docker image (Cloud Run, anything that runs a container)
   output: "standalone",
   poweredByHeader: false,
+  // next 14 needs this for src/instrumentation.ts (opentelemetry)
+  experimental: { instrumentationHook: true },
   images: {
+    // every image is a tiny png/sprite. no optimizer = no sharp needed in the standalone/docker build
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: "https",

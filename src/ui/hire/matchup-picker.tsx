@@ -51,9 +51,11 @@ export function MatchupPicker({ name, matchups }: { name: string; matchups: Matc
               <p className="mt-4 font-sans leading-relaxed">{picked.text}</p>
             </motion.div>
           ) : (
-            <motion.p key="idle" className="text-muted-foreground" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <motion.p key="idle" className="text-muted-foreground">
               What&apos;s hurting your team right now? Pick 1 on the left.
-              <span className="ml-1 animate-blink">▼</span>
+              <span aria-hidden className="ml-1 animate-blink">
+                ▼
+              </span>
             </motion.p>
           )}
         </AnimatePresence>

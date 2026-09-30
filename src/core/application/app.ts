@@ -1,18 +1,24 @@
 import type { Role } from "../domain/access/rbac";
 import { evaluateFlags } from "../domain/flags/flags";
-import { GEN_ONE_COUNT } from "../domain/pokemon/pokemon";
+import type { BattleEvent } from "../domain/battle/engine";
+import { GEN_ONE_COUNT, type TeamMember } from "../domain/pokemon/pokemon";
+import { KANTO, planTour } from "../domain/routing/route";
 import type {
   AccessCodes,
   AuditLog,
   Clock,
   ContactDirectory,
+  Logger,
+  EventPublisher,
   FlagSource,
   PokemonCatalog,
   ProfileSource,
   RateLimiter,
   TokenService,
 } from "./ports";
+import { NotFound } from "./errors";
 import { makeAuthorize } from "./use-cases/authorize";
+import { coachTeam, type CoachEvent, type CoachModel } from "./use-cases/coach-team";
 import { openSession, resolveSession } from "./use-cases/sessions";
 
 export interface AppDeps {
@@ -24,6 +30,9 @@ export interface AppDeps {
   audit: AuditLog;
   limiter: RateLimiter;
   flags: FlagSource;
+  events: EventPublisher;
+  coachModels: CoachModel[];
+  logger: Logger;
   clock: Clock;
 }
 
@@ -31,6 +40,7 @@ export interface AppDeps {
 // the http layer, the pages, the tests: they all go through here
 export function createApp(deps: AppDeps) {
   const authorize = makeAuthorize(deps);
+  const coach = coachTeam({ models: deps.coachModels, logger: deps.logger });
 
   return {
     openSession: openSession(deps),
@@ -49,6 +59,23 @@ export function createApp(deps: AppDeps) {
     // no permission needed: flags only change how things look/behave, never what you can access
     flagsFor(role: Role, bucketKey: string) {
       return evaluateFlags(deps.flags.rules(), { role, bucketKey });
+    },
+
+    // the HIRE button on the home page. rate limited by the http layer
+    async recordHireClick(role: Role) {
+      await deps.events.publish({ type: "hire.clicked", at: deps.clock(), role });
+    },
+
+    // shortest gym tour from a town. pure domain, no permission needed (public data)
+    planGymTour(fromId: string) {
+      const start = KANTO.find((s) => s.id === fromId);
+      if (!start) throw new NotFound(`no town "${fromId}"`);
+      return planTour(start, KANTO);
+    },
+
+    async coachTeam(role: Role, team: TeamMember[], log: BattleEvent[], emit: (e: CoachEvent) => void) {
+      authorize(role, "coach:use");
+      await coach(team, log, emit);
     },
 
     readAudit(role: Role, limit = 50) {

@@ -234,7 +234,9 @@ export function Arena() {
           {battle.log.length === 0 ? (
             <p>
               The AI wants to battle! What will {titleCase(mine.name)} do?
-              <span className="ml-1 animate-blink">▼</span>
+              <span aria-hidden className="ml-1 animate-blink">
+                ▼
+              </span>
             </p>
           ) : (
             <ul className="space-y-1">

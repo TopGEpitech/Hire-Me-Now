@@ -38,7 +38,11 @@ export function FinalChoice({ profile }: { profile: Profile }) {
         <div className="grid grid-cols-2 border-t-2 font-mono font-bold sm:border-l-2 sm:border-t-0">
           <button
             type="button"
-            onClick={() => setChoice("hire")}
+            onClick={() => {
+              setChoice("hire");
+              // tells me someone clicked (slack + signed webhook). fire + forget
+              fetch("/api/events/hire", { method: "POST" }).catch(() => {});
+            }}
             className="border-r-2 px-8 py-5 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
           >
             ▶ HIRE
