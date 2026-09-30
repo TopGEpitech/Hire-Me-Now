@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { App } from "@/core/application/app";
+import type { Clock, Logger } from "@/core/application/ports";
 import { AccessDenied, InvalidAccessCode, NotFound, TooManyAttempts, UpstreamError } from "@/core/application/errors";
 import { SESSION_TTL_MS, type Viewer } from "@/core/application/use-cases/sessions";
 import { permissionsOf } from "@/core/domain/access/rbac";
@@ -9,6 +10,9 @@ import { GEN_ONE_COUNT } from "@/core/domain/pokemon/pokemon";
 // the next.js route files are 1 liners that point here, so all of this is testable with a plain Request
 
 export const SESSION_COOKIE = "hm_session";
+// anonymous + random, only used to keep you in the same feature flag bucket
+export const BUCKET_COOKIE = "hm_bucket";
+const REQUEST_ID = /^[a-zA-Z0-9-]{8,64}$/;
 
 const SessionBody = z.object({ accessCode: z.string().trim().min(1).max(128) });
 const Slug = z.string().regex(/^[a-z0-9-]{1,40}$/i);
@@ -20,22 +24,25 @@ function json(body: unknown, status = 200, headers: Record<string, string> = {})
   return Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
 }
 
+function readCookie(req: Request, cookieName: string): string | null {
+  for (const part of (req.headers.get("cookie") ?? "").split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === cookieName) return decodeURIComponent(rest.join("="));
+  }
+  return null;
+}
+
 function readToken(req: Request): string | null {
   const auth = req.headers.get("authorization");
   if (auth?.startsWith("Bearer ")) return auth.slice(7).trim() || null;
-
-  for (const part of (req.headers.get("cookie") ?? "").split(";")) {
-    const [name, ...rest] = part.trim().split("=");
-    if (name === SESSION_COOKIE) return decodeURIComponent(rest.join("="));
-  }
-  return null;
+  return readCookie(req, SESSION_COOKIE);
 }
 
 // only used as a rate limit key, never stored
 const clientKey = (req: Request) =>
   req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "local";
 
-function fail(error: unknown): Response {
+function fail(error: unknown, log: Logger, requestId: string): Response {
   if (error instanceof AccessDenied) {
     return json({ error: "forbidden", need: error.permission, youAre: error.role }, 403);
   }
@@ -48,20 +55,34 @@ function fail(error: unknown): Response {
   if (error instanceof NotFound) return json({ error: "not_found" }, 404);
   if (error instanceof UpstreamError) return json({ error: "upstream_failed" }, 502);
 
-  console.error("[api] unexpected", error);
-  return json({ error: "internal" }, 500);
+  // the request id goes back to the client, so a bug report can point at the exact log line
+  log.error("unhandled_error", { requestId, error });
+  return json({ error: "internal", requestId }, 500);
 }
 
 interface Ctx<P> {
   req: Request;
   viewer: Viewer;
   params: P;
+  requestId: string;
 }
 
-export function createHttpApi(app: App, opts: { secureCookies: boolean }) {
-  const cookie = (value: string, maxAgeSec: number) =>
+interface HttpOptions {
+  secureCookies: boolean;
+  logger: Logger;
+  clock?: Clock;
+  version?: string;
+  newId?: () => string;
+}
+
+export function createHttpApi(app: App, opts: HttpOptions) {
+  const clock = opts.clock ?? Date.now;
+  const newId = opts.newId ?? (() => crypto.randomUUID());
+  const startedAt = clock();
+
+  const cookie = (value: string, maxAgeSec: number, name = SESSION_COOKIE) =>
     [
-      `${SESSION_COOKIE}=${value}`,
+      `${name}=${value}`,
       "Path=/",
       "HttpOnly",
       "SameSite=Lax",
@@ -72,18 +93,35 @@ export function createHttpApi(app: App, opts: { secureCookies: boolean }) {
       .join("; ");
   const dropCookie = cookie("", 0);
 
-  // every route goes through this: who's calling -> run -> map errors -> clean up a dead cookie
+  // every route goes through this: request id -> who's calling -> run -> map errors ->
+  // clean up a dead cookie -> 1 structured log line. same observability on every endpoint for free
   const route =
     <P = void>(handler: (ctx: Ctx<P>) => Response | Promise<Response>) =>
     async (req: Request, params: P) => {
+      const t0 = clock();
+      const incoming = req.headers.get("x-request-id");
+      const requestId = incoming && REQUEST_ID.test(incoming) ? incoming : newId();
       const viewer = await app.resolveSession(readToken(req));
+
       let res: Response;
       try {
-        res = await handler({ req, viewer, params });
+        res = await handler({ req, viewer, params, requestId });
       } catch (error) {
-        res = fail(error);
+        res = fail(error, opts.logger, requestId);
       }
       if (viewer.stale && !res.headers.has("set-cookie")) res.headers.append("set-cookie", dropCookie);
+
+      const durationMs = clock() - t0;
+      res.headers.set("x-request-id", requestId);
+      res.headers.set("server-timing", `app;dur=${durationMs}`);
+      opts.logger.info("http_request", {
+        requestId,
+        method: req.method,
+        path: new URL(req.url).pathname,
+        status: res.status,
+        durationMs,
+        role: viewer.role,
+      });
       return res;
     };
 
@@ -94,6 +132,19 @@ export function createHttpApi(app: App, opts: { secureCookies: boolean }) {
   };
 
   return {
+    // for uptime checks + load balancers. no auth, no secrets, no upstream calls
+    health: route(() =>
+      json({ status: "ok", version: opts.version ?? "dev", uptimeS: Math.round((clock() - startedAt) / 1000) }),
+    ),
+
+    flags: route(({ req, viewer }) => {
+      const existing = readCookie(req, BUCKET_COOKIE);
+      const bucket = existing && REQUEST_ID.test(existing) ? existing : newId();
+      const headers: Record<string, string> =
+        existing === bucket ? {} : { "set-cookie": cookie(bucket, 60 * 60 * 24 * 365, BUCKET_COOKIE) };
+      return json(app.flagsFor(viewer.role, bucket), 200, headers);
+    }),
+
     me: route(({ viewer }) =>
       json({ role: viewer.role, permissions: permissionsOf(viewer.role), expiresAt: viewer.expiresAt }),
     ),

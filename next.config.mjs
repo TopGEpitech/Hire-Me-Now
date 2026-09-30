@@ -10,6 +10,8 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  // small self contained server for the docker image (Cloud Run, anything that runs a container)
+  output: "standalone",
   poweredByHeader: false,
   images: {
     remotePatterns: [

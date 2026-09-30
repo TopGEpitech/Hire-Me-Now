@@ -1,5 +1,7 @@
 # Why you should hire me
 
+**Live:** https://pokedex-nextjs14-lyart.vercel.app/
+
 ![The hire me page](docs/screenshots/hire-me.png)
 
 Hey. I'm **Younes Kad**, lead dev, full stack, TypeScript + JavaScript. Based in Lyon, looking for full remote.
@@ -67,6 +69,8 @@ Longer reasoning in [docs/adr/0001-hexagonal-architecture.md](docs/adr/0001-hexa
 
 | Method   | Path                 | Needs          |
 | -------- | -------------------- | -------------- |
+| `GET`    | `/api/health`        | nothing        |
+| `GET`    | `/api/flags`         | nothing        |
 | `GET`    | `/api/me`            | nothing        |
 | `POST`   | `/api/auth/session`  | an access code |
 | `DELETE` | `/api/auth/session`  | nothing        |
@@ -97,17 +101,50 @@ npm run ci        # all of the above + a prod build
 
 The tests go from the pure battle engine all the way to the http layer. The http tests build a real `Request`, send it through the same code the route files use + check status codes, cookies and headers. No server running, no Next.js mocking.
 
-[GitHub Actions](.github/workflows/ci.yml) runs lint, typecheck, tests + build on every push and every PR.
+[GitHub Actions](.github/workflows/ci.yml) runs lint, typecheck, tests + build on every push and every PR. Then a 2nd job builds the Docker image, starts it + curls `/api/health`. If the container doesn't come up, CI is red. PRs get a [template](.github/pull_request_template.md) with the checklist I use at work.
+
+## The ops side (straight from my CV)
+
+My CV says feature flags, canary releases, structured logs + Docker. Talk is cheap, so here they are, running.
+
+**Feature flags + canary.** 2 flags right now: `smart-ai` (the battle AI that reads the type chart) and `shiny-sprites`. A flag can be on/off, limited to some roles, or rolled out to a % of people. The % part is a real canary: every visitor gets an anonymous bucket cookie + a hash puts them in 0..99, so the same person always sees the same thing. No flicker. Want the smart AI for 20% of people? `FEATURE_FLAGS='{"smart-ai":{"enabled":true,"rolloutPercent":20}}'`, redeploy, done. The logic is pure domain code in [`flags.ts`](src/core/domain/flags/flags.ts) + tested (a test checks 25% really lands around 25%).
+
+**Observability.** Every API call gets a request id (kept from your gateway if it looks sane, generated if not), an `x-request-id` + `server-timing` header, and 1 JSON log line:
+
+```json
+{
+  "time": "...",
+  "level": "info",
+  "event": "http_request",
+  "service": "hire-me",
+  "requestId": "74a7dd1b-...",
+  "method": "GET",
+  "path": "/api/health",
+  "status": 200,
+  "durationMs": 2,
+  "role": "visitor"
+}
+```
+
+A crash returns the request id to the client, so a bug report points at the exact log line. `/api/health` gives status + version + uptime for load balancers.
+
+**Docker.** Multi stage, Next standalone output, non root user, healthcheck. Same image runs on Cloud Run or anything else that takes a container.
+
+```bash
+docker build -t hire-me .
+docker run -p 8080:8080 -e AUTH_SECRET="$(openssl rand -base64 48)" hire-me
+```
 
 ## Env vars
 
-| Name                    | What for                                                    |
-| ----------------------- | ----------------------------------------------------------- |
-| `AUTH_SECRET`           | signs sessions. 32+ chars. `openssl rand -base64 48`        |
-| `RECRUITER_ACCESS_CODE` | the code I send to recruiters. unset = nobody gets the role |
-| `ADMIN_ACCESS_CODE`     | mine                                                        |
-| `CONTACT_PHONE`         | shown to recruiter + admin only                             |
-| `CONTACT_WHATSAPP`      | same                                                        |
+| Name                    | What for                                                       |
+| ----------------------- | -------------------------------------------------------------- |
+| `AUTH_SECRET`           | signs sessions. 32+ chars. `openssl rand -base64 48`           |
+| `RECRUITER_ACCESS_CODE` | the code I send to recruiters. unset = nobody gets the role    |
+| `ADMIN_ACCESS_CODE`     | mine                                                           |
+| `CONTACT_PHONE`         | shown to recruiter + admin only                                |
+| `CONTACT_WHATSAPP`      | same                                                           |
+| `FEATURE_FLAGS`         | json overrides for the flags. broken json = defaults, no crash |
 
 Bad config crashes at boot with a clear message. Better than a weird 500 3 days later.
 

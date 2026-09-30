@@ -31,6 +31,8 @@ const FOLDERS = `src/
 type Endpoint = { method: string; path: string; permission: Permission | null; note: string };
 
 const ENDPOINTS: Endpoint[] = [
+  { method: "GET", path: "/api/health", permission: null, note: "status, version, uptime. for load balancers" },
+  { method: "GET", path: "/api/flags", permission: null, note: "feature flags for you (sticky canary bucket)" },
   { method: "GET", path: "/api/me", permission: null, note: "your role + what it can do" },
   {
     method: "POST",
@@ -53,6 +55,7 @@ const PIPELINE = [
   { step: "typecheck", note: "strict mode on" },
   { step: "test", note: "vitest, domain to http" },
   { step: "build", note: "real next build" },
+  { step: "docker", note: "build the image + curl /api/health" },
 ];
 
 const rolesFor = (p: Permission | null) => (p ? ROLES.filter((r) => can(r, p)).join(", ") : "everyone");
@@ -212,7 +215,7 @@ curl -i -b jar $HOST/api/contact                            # 200`}</pre>
       <Section
         id="ci"
         kicker="CI"
-        title="Every push, same 5 steps"
+        title="Every push, same 6 steps"
         intro="GitHub Actions on every push + every PR. If 1 step is red, it doesn't merge. Simple rule, saves a lot of Fridays."
       >
         <ol className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
@@ -224,6 +227,47 @@ curl -i -b jar $HOST/api/contact                            # 200`}</pre>
             </li>
           ))}
         </ol>
+      </Section>
+
+      <Section
+        id="ops"
+        kicker="Ops"
+        title="Flags, logs + a container"
+        intro="My CV says feature flags, canary releases, structured logs + Docker. So here they are, running on this site."
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="panel p-5 text-muted-foreground">
+            <h3 className="text-lg font-extrabold text-foreground">Feature flags with a real canary</h3>
+            <p className="mt-2">
+              2 flags: <code className="font-mono">smart-ai</code> + <code className="font-mono">shiny-sprites</code>.
+              On/off, per role, or a % rollout. You get an anonymous bucket cookie, a hash puts you in 0..99, so the
+              same visitor always gets the same answer. No flicker.
+            </p>
+            <p className="mt-2">
+              Rolling out the smart AI to 20% of people is 1 env var + a redeploy. Broken json in that var? Defaults + a
+              warning in the logs. A typo in a flag should never take the site down.
+            </p>
+          </div>
+          <div className="panel p-5 text-muted-foreground">
+            <h3 className="text-lg font-extrabold text-foreground">Logs you can actually search</h3>
+            <p className="mt-2">
+              Every API call gets a request id, an <code className="font-mono">x-request-id</code> +{" "}
+              <code className="font-mono">server-timing</code> header, and 1 JSON line: method, path, status, time,
+              role. A crash sends the request id back, so a bug report points at the exact line.
+            </p>
+            <p className="mt-2">
+              The logger is a port. Today it writes JSON to stdout. Tomorrow Datadog? New adapter, core unchanged.
+            </p>
+          </div>
+          <div className="panel p-5 text-muted-foreground md:col-span-2">
+            <h3 className="text-lg font-extrabold text-foreground">Docker</h3>
+            <p className="mt-2">
+              Multi stage build, Next standalone output, runs as a non root user, has a healthcheck. CI builds it on
+              every push, starts it + curls <code className="font-mono">/api/health</code>. Same image goes to Cloud Run
+              or anywhere that runs a container.
+            </p>
+          </div>
+        </div>
       </Section>
 
       <Section id="next" kicker="Honest part" title="What I'd change for a real prod">

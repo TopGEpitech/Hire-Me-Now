@@ -59,7 +59,9 @@ export function startBattle(player: TeamMember[], ai: TeamMember[]): Battle {
   return { player: player.map(toFighter), ai: ai.map(toFighter), turn: 0, log: [], winner: null };
 }
 
-export function chooseAiMove(attacker: Fighter, defender: Fighter, random: Random = Math.random) {
+export function chooseAiMove(attacker: Fighter, defender: Fighter, random: Random = Math.random, smart = true) {
+  // the old AI, kept behind the "smart-ai" flag so i can roll the new one out slowly
+  if (!smart) return Math.floor(random() * attacker.moves.length);
   // 1 time out of 5 it goes random so it doesn't feel like a calculator
   if (random() < 0.2) return Math.floor(random() * attacker.moves.length);
 
@@ -83,7 +85,12 @@ interface Action {
 }
 
 // pure: same battle + same randoms in = same battle out. the ui just renders what comes back
-export function playTurn(battle: Battle, playerMoveIndex: number, random: Random = Math.random): Battle {
+export function playTurn(
+  battle: Battle,
+  playerMoveIndex: number,
+  random: Random = Math.random,
+  opts: { smartAi?: boolean } = {},
+): Battle {
   if (battle.winner) return battle;
 
   const teams: Record<Side, Fighter[]> = {
@@ -96,7 +103,7 @@ export function playTurn(battle: Battle, playerMoveIndex: number, random: Random
 
   const myMove = mine.moves[playerMoveIndex];
   if (!myMove) throw new Error(`no move at index ${playerMoveIndex}`);
-  const theirMove = theirs.moves[chooseAiMove(theirs, mine, random)];
+  const theirMove = theirs.moves[chooseAiMove(theirs, mine, random, opts.smartAi ?? true)];
 
   const iGoFirst = mine.stats.speed === theirs.stats.speed ? random() < 0.5 : mine.stats.speed > theirs.stats.speed;
   const me: Action = { side: "player", attacker: mine, defender: theirs, move: myMove };
