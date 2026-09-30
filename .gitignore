@@ -1,0 +1,19 @@
+# deps
+/node_modules
+
+# next
+/.next/
+/out/
+*.tsbuildinfo
+
+# tests
+/coverage
+
+# env: only the example goes in git
+.env*
+!.env.example
+
+# misc
+.DS_Store
+*.log
+.vercel
