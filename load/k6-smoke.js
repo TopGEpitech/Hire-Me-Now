@@ -28,6 +28,8 @@ export default function () {
   check(http.get(`${BASE}/api/me`), { "me 200": (r) => r.status === 200 });
   check(http.get(`${BASE}/api/route?from=pallet`), { "route 200": (r) => r.status === 200 });
   // a visitor asking for private data must keep getting a 403 under load too
-  check(http.get(`${BASE}/api/contact`), { "contact 403": (r) => r.status === 403 });
+  // 403 is the right answer here, so tell k6 it's not a failed request
+  const denied = http.get(`${BASE}/api/contact`, { responseCallback: http.expectedStatuses(403) });
+  check(denied, { "contact 403": (r) => r.status === 403 });
   check(http.get(`${BASE}/`), { "home 200": (r) => r.status === 200 });
 }

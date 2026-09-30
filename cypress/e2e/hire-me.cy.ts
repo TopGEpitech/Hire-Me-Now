@@ -3,7 +3,9 @@
 const a11y = () => {
   cy.injectAxe();
   // WCAG 2.1 AA. fails the test on any violation
-  cy.checkA11y(undefined, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] } });
+  cy.checkA11y(undefined, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] } }, (violations) =>
+    cy.task("log", violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`).join("\n")),
+  );
 };
 
 describe("hire me page", () => {

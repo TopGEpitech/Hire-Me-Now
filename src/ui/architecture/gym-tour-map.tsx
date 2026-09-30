@@ -15,9 +15,8 @@ export function GymTourMap({ tour }: { tour: Tour }) {
         role="img"
         aria-labelledby="tour-title"
       >
-        <title id="tour-title">
-          Shortest gym tour from {tour.order[0].name}: {tour.order.map((s) => s.name).join(", ")}
-        </title>
+        {/* 1 string on purpose: several text nodes inside an svg <title> break hydration */}
+        <title id="tour-title">{`Shortest gym tour from ${tour.order[0].name}: ${tour.order.map((s) => s.name).join(", ")}`}</title>
         <path d={path} className="fill-none stroke-primary" strokeWidth={3} strokeDasharray="7 5" />
         {pts.map((p, i) => (
           <g key={p.id}>

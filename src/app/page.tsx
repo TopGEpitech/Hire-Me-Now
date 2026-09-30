@@ -51,7 +51,10 @@ export default function HirePage() {
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-8 pt-10 sm:pt-16 lg:grid-cols-[1.15fr_1fr]">
         <div>
           <p className="kicker">
-            Pokédex entry No. 152 <span className="animate-blink">_</span>
+            Pokédex entry No. 152{" "}
+            <span aria-hidden className="animate-blink">
+              _
+            </span>
           </p>
           <h1 className="mt-3 text-5xl font-black leading-[0.95] tracking-tight sm:text-7xl">
             Why you should <span className="bg-accent px-2 [box-decoration-break:clone]">hire me.</span>

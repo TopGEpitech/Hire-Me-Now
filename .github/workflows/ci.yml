@@ -127,9 +127,10 @@ jobs:
       # cypress isn't a project dependency (it's 500MB, Vercel + docker don't need it)
       - run: npm i --no-save cypress@13 cypress-axe@1 axe-core@4
       - run: npm run build
-      - name: Start server
+      - name: Start server (same standalone server as the docker image)
         run: |
-          npx next start -p 3000 > server.log 2>&1 &
+          cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+          PORT=3000 node .next/standalone/server.js > server.log 2>&1 &
           for i in $(seq 1 30); do curl -fsS http://localhost:3000/api/health && break; sleep 1; done
       - run: npx cypress run
       - if: failure()
@@ -150,9 +151,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - name: Start server
+      - name: Start server (same standalone server as the docker image)
         run: |
-          npx next start -p 3000 > server.log 2>&1 &
+          cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+          PORT=3000 node .next/standalone/server.js > server.log 2>&1 &
           for i in $(seq 1 30); do curl -fsS http://localhost:3000/api/health && break; sleep 1; done
       - uses: grafana/setup-k6-action@v1
       - run: k6 run -e BASE_URL=http://localhost:3000 load/k6-smoke.js

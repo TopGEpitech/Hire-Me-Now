@@ -136,7 +136,9 @@ export function ApiPlayground() {
           {calls.length === 0 ? (
             <p className="opacity-80">
               {"> "}No code? Then you&apos;re a visitor. Hit /api/contact + enjoy your 403.
-              <span className="ml-1 animate-blink">▌</span>
+              <span aria-hidden className="ml-1 animate-blink">
+                ▌
+              </span>
             </p>
           ) : (
             <ul className="space-y-4">

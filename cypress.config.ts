@@ -6,5 +6,14 @@ export default defineConfig({
     baseUrl: "http://localhost:3000",
     supportFile: "cypress/support.ts",
     video: false,
+    setupNodeEvents(on) {
+      // so axe violations show up in the CI log, not just "1 violation"
+      on("task", {
+        log(message: string) {
+          console.log(message);
+          return null;
+        },
+      });
+    },
   },
 });
