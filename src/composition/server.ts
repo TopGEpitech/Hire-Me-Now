@@ -8,6 +8,8 @@ import { HmacTokenService } from "@/adapters/driven/security/hmac-token-service"
 import { CompositeTokenService, OidcTokenVerifier } from "@/adapters/driven/security/oidc-token-verifier";
 import { MemoryRateLimiter } from "@/adapters/driven/security/memory-rate-limiter";
 import { createHttpApi } from "@/adapters/driving/http/http-api";
+import Anthropic from "@anthropic-ai/sdk";
+import { ClaudeCoach } from "@/adapters/driven/coach/claude-coach";
 import { createApp } from "@/core/application/app";
 import { EnvFlags } from "@/adapters/driven/flags/env-flags";
 import { FanoutPublisher, SignedWebhookPublisher, SlackPublisher } from "@/adapters/driven/events/publishers";
@@ -29,6 +31,7 @@ const Env = z.object({
   VERCEL_GIT_COMMIT_SHA: blankIsUnset(z.string()),
   SLACK_WEBHOOK_URL: blankIsUnset(z.string().url()),
   WEBHOOK_URL: blankIsUnset(z.string().url()),
+  ANTHROPIC_API_KEY: blankIsUnset(z.string()),
   OIDC_ISSUER: blankIsUnset(z.string().url()),
   OIDC_AUDIENCE: blankIsUnset(z.string()),
   WEBHOOK_SECRET: blankIsUnset(z.string().min(16, "WEBHOOK_SECRET: 16 chars min")),
@@ -37,7 +40,8 @@ const Env = z.object({
 // bad config = crash at boot with a clear message, not a weird 500 3 days later
 const env = Env.parse(process.env);
 
-const logger = new JsonLogger(undefined, Date.now, { service: "hire-me" });
+const out = process.env.LOG_STREAM === "stderr" ? process.stderr : process.stdout;
+const logger = new JsonLogger((line) => out.write(`${line}\n`), Date.now, { service: "hire-me" });
 
 if (!env.AUTH_SECRET && env.NODE_ENV === "production" && process.env.NEXT_PHASE !== "phase-production-build") {
   logger.warn("auth_secret_missing", { note: "using a random one, sessions won't survive a restart" });
@@ -60,6 +64,16 @@ const tokens =
       ])
     : hmacTokens;
 
+// no key = no AI calls at all, the coach answers with its rule engine. never a fake answer
+const anthropic = env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }) : null;
+const coachModels = anthropic
+  ? [
+      // server-side fallback covers safety refusals, the 2nd model covers everything else (timeouts, 5xx, bad json)
+      new ClaudeCoach(anthropic, "claude-opus-5-5", { serverFallback: true }),
+      new ClaudeCoach(anthropic, "claude-sonnet-5-5"),
+    ]
+  : [];
+
 export const app = createApp({
   catalog: new PokeApiCatalog(),
   tokens,
@@ -70,6 +84,8 @@ export const app = createApp({
   audit: new MemoryAuditLog(200),
   limiter: new MemoryRateLimiter(5, 60_000),
   events: new FanoutPublisher(eventTargets, logger),
+  coachModels,
+  logger,
   flags: new EnvFlags(env.FEATURE_FLAGS, (msg) => logger.warn("feature_flags_invalid", { msg })),
   clock: Date.now,
 });
@@ -78,5 +94,6 @@ export const http = createHttpApi(app, {
   secureCookies: env.NODE_ENV === "production",
   logger,
   hireLimiter: new MemoryRateLimiter(3, 60_000),
+  coachLimiter: new MemoryRateLimiter(5, 60_000),
   version: env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7),
 });

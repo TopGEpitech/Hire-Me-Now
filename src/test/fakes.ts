@@ -70,6 +70,8 @@ export function testApp(opts: { now?: () => number } = {}) {
     audit,
     limiter: new MemoryRateLimiter(5, 60_000, clock),
     events: { publish: async (e) => void events.push(e) },
+    coachModels: [],
+    logger: { info() {}, warn() {}, error() {} },
     flags: new EnvFlags('{"shiny-sprites":{"enabled":true,"roles":["admin"]}}'),
     clock,
   });
