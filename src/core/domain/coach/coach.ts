@@ -82,9 +82,14 @@ export function ruleCoach(t: TeamTelemetry): Diagnosis {
 
   const fixes: string[] = [];
   if (size < 6) fixes.push(`add ${6 - size} more pokemon, a full team of 6 gives you switch options`);
-  if (threats[0]) {
-    const answer = ALL_TYPES.find((d) => typeMultiplier(threats[0].type, [d]) <= 0.5);
-    if (answer) fixes.push(`add a ${answer} type, it resists ${threats[0].type}`);
+  if (threats.length) {
+    // the type that resists the most threats at once, + that the team doesn't already have
+    const have = new Set(t.members.flatMap((m) => m.types));
+    const scored = ALL_TYPES.filter((d) => !have.has(d))
+      .map((d) => ({ d, resists: threats.filter((th) => typeMultiplier(th.type, [d]) < 1).map((th) => th.type) }))
+      .sort((a, b) => b.resists.length - a.resists.length);
+    const best = scored[0];
+    if (best?.resists.length) fixes.push(`add a ${best.d} type, it resists ${best.resists.join(" + ")}`);
   }
   if (t.uncovered.length > ALL_TYPES.length / 2)
     fixes.push("your moves hit few types super effectively, mix up move types");

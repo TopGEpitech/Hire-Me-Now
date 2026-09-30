@@ -53,3 +53,12 @@ describe("rule coach", () => {
     expect(ruleCoach(teamTelemetry([arcanine])).verdict).toBe("weak");
   });
 });
+
+describe("rule coach fixes", () => {
+  it("suggests a type that covers several threats + isn't already on the team", () => {
+    const d = ruleCoach(teamTelemetry([charizard, arcanine]));
+    const fix = d.fixes.find((f) => f.startsWith("add a "))!;
+    expect(fix).not.toMatch(/add a (fire|flying) type/);
+    expect(fix.split("resists ")[1].split(" + ").length).toBeGreaterThanOrEqual(2);
+  });
+});

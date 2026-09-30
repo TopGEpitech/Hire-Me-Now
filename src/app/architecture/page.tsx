@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { PERMISSIONS, ROLES, can, type Permission } from "@/core/domain/access/rbac";
+import { app } from "@/composition/server";
 import { ApiPlayground } from "@/ui/architecture/api-playground";
+import { GymTourMap } from "@/ui/architecture/gym-tour-map";
 import { HexagonDiagram } from "@/ui/architecture/hexagon-diagram";
 import { Section } from "@/ui/hire/section";
 
@@ -47,6 +49,9 @@ const ENDPOINTS: Endpoint[] = [
   { method: "GET", path: "/api/moves/:name", permission: "pokedex:read", note: "type + power" },
   { method: "GET", path: "/api/contact", permission: "contact:read", note: "phone + whatsapp, from env" },
   { method: "GET", path: "/api/admin/audit", permission: "audit:read", note: "who tried what, denied or not" },
+  { method: "POST", path: "/api/coach", permission: "coach:use", note: "AI coach, streams server-sent events" },
+  { method: "GET", path: "/api/route", permission: null, note: "shortest gym tour, ?from=pallet" },
+  { method: "POST", path: "/api/events/hire", permission: null, note: "the HIRE button -> slack + signed webhook" },
 ];
 
 const PIPELINE = [
@@ -55,7 +60,12 @@ const PIPELINE = [
   { step: "typecheck", note: "strict mode on" },
   { step: "test", note: "vitest, domain to http" },
   { step: "build", note: "real next build" },
+  { step: "sdk check", note: "generated SDK = spec, or red" },
+  { step: "go + python", note: "go test -race, pytest" },
+  { step: "ai eval", note: "coach graded on fixed cases" },
   { step: "docker", note: "build the image + curl /api/health" },
+  { step: "e2e + a11y", note: "cypress + axe (WCAG AA)" },
+  { step: "load", note: "k6, p95 under 500ms" },
 ];
 
 const rolesFor = (p: Permission | null) => (p ? ROLES.filter((r) => can(r, p)).join(", ") : "everyone");
@@ -111,7 +121,7 @@ export default function ArchitecturePage() {
         id="rbac"
         kicker="Access control"
         title="RBAC, deny by default"
-        intro="3 roles, 4 permissions, 1 policy file. Every use case takes the caller's role first + checks it before doing anything. Not in the policy? Then no. There's no secret admin bypass."
+        intro="3 roles, 5 permissions, 1 policy file. Every use case takes the caller's role first + checks it before doing anything. Not in the policy? Then no. There's no secret admin bypass."
       >
         <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
           <div className="panel overflow-x-auto">
@@ -161,6 +171,23 @@ export default function ArchitecturePage() {
             <p>
               <strong className="text-foreground">Audit:</strong> every denied call + every read of private data lands
               in an audit log. No IPs stored, just role, action, allowed or not.
+            </p>
+            <p>
+              <strong className="text-foreground">Keycloak:</strong> set <code className="font-mono">OIDC_ISSUER</code>{" "}
+              + <code className="font-mono">OIDC_AUDIENCE</code> and bearer tokens from a Keycloak realm work next to my
+              own sessions. Signature checked against the realm&apos;s JWKS, issuer, audience, expiry, RS256/ES256 only.
+              Realm roles <code className="font-mono">hireme-recruiter</code> /{" "}
+              <code className="font-mono">hireme-admin</code> map to my roles.
+            </p>
+            <p>
+              <strong className="text-foreground">OWASP:</strong> the{" "}
+              <a
+                className="font-medium text-foreground underline underline-offset-4"
+                href="https://github.com/TopGEpitech/Pokedex-Nextjs14/blob/main/docs/security/owasp-top-10.md"
+              >
+                top 10 grid
+              </a>{" "}
+              maps each risk to the file that handles it, + says honestly which ones don&apos;t apply.
             </p>
           </div>
         </div>
@@ -215,7 +242,7 @@ curl -i -b jar $HOST/api/contact                            # 200`}</pre>
       <Section
         id="ci"
         kicker="CI"
-        title="Every push, same 6 steps"
+        title="Every push, same checks"
         intro="GitHub Actions on every push + every PR. If 1 step is red, it doesn't merge. Simple rule, saves a lot of Fridays."
       >
         <ol className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
@@ -227,6 +254,131 @@ curl -i -b jar $HOST/api/contact                            # 200`}</pre>
             </li>
           ))}
         </ol>
+      </Section>
+
+      <Section
+        id="ai"
+        kicker="AI"
+        title="An AI coach that doesn't make stuff up"
+        intro="Open /battle, build a team, hit 'Rate my team'. Here's what happens behind that button."
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="panel space-y-2 p-5 text-muted-foreground">
+            <h3 className="text-lg font-extrabold text-foreground">It reads numbers, not vibes</h3>
+            <p>
+              The core computes the team&apos;s telemetry first: which types hit 2+ of your pokemon super effectively,
+              what your moves cover, who did the damage last battle. The model gets that + the type chart as its docs.
+              It never has to guess a weakness.
+            </p>
+            <p>
+              The answer comes back as structured output (verdict, threats, fixes, mvp), streamed token by token, then
+              validated with Zod on my side. A threat type that doesn&apos;t exist? Rejected.
+            </p>
+          </div>
+          <div className="panel space-y-2 p-5 text-muted-foreground">
+            <h3 className="text-lg font-extrabold text-foreground">It doesn&apos;t go down with the API</h3>
+            <p>
+              Chain: Claude Opus 5.5 (with server side fallback if a safety filter declines) → Claude Sonnet 5.5 if that
+              fails (timeout, 5xx, bad json) → a plain rule engine if everything is down. The UI shows each switch. You
+              always get an answer, + it&apos;s never a fake one.
+            </p>
+            <p>No API key on this deploy = the rule engine answers + says so. Rate limited, 5 questions a minute.</p>
+          </div>
+          <div className="panel space-y-2 p-5 text-muted-foreground">
+            <h3 className="text-lg font-extrabold text-foreground">Evals in CI</h3>
+            <p>
+              Fixed teams, checks graded by code (not by another LLM): right verdict, a real threat found, no fake
+              threat, an mvp that&apos;s actually on the team. The rule baseline runs every time. With an API key in CI,
+              Claude runs too + has to beat 85%.
+            </p>
+          </div>
+          <div className="panel space-y-2 p-5 text-muted-foreground">
+            <h3 className="text-lg font-extrabold text-foreground">MCP server</h3>
+            <p>
+              <code className="font-mono">npm run mcp</code> + add it to Claude Desktop, Claude Code or Cursor. 5 tools:
+              search, pokedex entry, gym tour, a seeded battle simulator (same seed = same fight) and the coach. Same
+              use cases as the site, just another driving adapter. MCP callers get visitor rights, nothing more.
+            </p>
+          </div>
+        </div>
+      </Section>
+
+      <Section
+        id="algo"
+        kicker="Algorithms"
+        title="Planning a round, the technician way"
+        intro="Visiting every gym once + coming home is the same problem as planning a field technician's day. It's a TSP, too slow to solve exactly past ~12 stops."
+      >
+        <div className="grid items-start gap-6 lg:grid-cols-[1fr_1.1fr]">
+          <div className="space-y-3 text-muted-foreground">
+            <p>
+              Step 1, nearest neighbour: always go to the closest place you haven&apos;t been. Fast, usually ~25% off.
+            </p>
+            <p>
+              Step 2, 2-opt: if 2 legs of the trip cross, reverse the bit in between. Repeat until nothing gets shorter.
+              On Kanto it lands within 5% of the real optimum (a test brute forces the optimum to check), + 200 stops
+              still plan in well under a second.
+            </p>
+            <p>
+              Available at <code className="font-mono">/api/route?from=pallet</code> + as an MCP tool.
+            </p>
+          </div>
+          <GymTourMap tour={app.planGymTour("pallet")} />
+        </div>
+      </Section>
+
+      <Section
+        id="services"
+        kicker="Beyond Next.js"
+        title="A Go gateway + a Python detector"
+        intro="Not everything belongs in the web app. 2 small services in services/, each with its own tests in CI."
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="panel space-y-2 p-5 text-muted-foreground">
+            <h3 className="text-lg font-extrabold text-foreground">Telemetry gateway (Go)</h3>
+            <p>
+              Takes battle events as NDJSON, validates them, rate limits each device (token bucket), batches them +
+              hands batches to a <code className="font-mono">Sink</code> interface. In prod that&apos;s a Kafka
+              producer. Here it writes NDJSON, bcs there&apos;s no broker on this deploy.
+            </p>
+            <p>
+              Prometheus metrics on /metrics for Grafana, + 4x hits pushed to browsers over server-sent events. A test
+              fires 10 000 simulated devices at it: 100k events, 0 lost, race detector clean.
+            </p>
+          </div>
+          <div className="panel space-y-2 p-5 text-muted-foreground">
+            <h3 className="text-lg font-extrabold text-foreground">Anomaly detection (Python)</h3>
+            <p>
+              Reads the gateway output from a pipe. Flags damage outliers per device with a robust z-score (median +
+              MAD, so 1 huge value can&apos;t hide itself by dragging the average) + devices bursting way above the
+              fleet.
+            </p>
+            <p>
+              <code className="font-mono">go run ./cmd/gateway | python -m anomaly.detect</code>
+            </p>
+          </div>
+        </div>
+      </Section>
+
+      <Section id="integrations" kicker="Integrations" title="Webhooks, Slack + an API that's written first">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="panel space-y-2 p-5 text-muted-foreground">
+            <h3 className="text-lg font-extrabold text-foreground">Signed webhooks + Slack</h3>
+            <p>
+              Someone clicks HIRE or a recruiter logs in → an event goes out to Slack + to a webhook signed like Stripe
+              does it: <code className="font-mono">t=timestamp,v1=hmac</code>. The timestamp is inside the signature, so
+              a captured request can&apos;t be replayed 10 minutes later. 1 target down never blocks the others.
+            </p>
+          </div>
+          <div className="panel space-y-2 p-5 text-muted-foreground">
+            <h3 className="text-lg font-extrabold text-foreground">OpenAPI first</h3>
+            <p>
+              <code className="font-mono">openapi/openapi.yaml</code> is the contract. The TypeScript SDK is generated
+              from it, + the browser uses that SDK. A test fails if a route + the spec drift apart, + CI fails if
+              someone edits the spec without regenerating.
+            </p>
+          </div>
+        </div>
       </Section>
 
       <Section

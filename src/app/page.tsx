@@ -26,9 +26,19 @@ const PROOF = [
     text: "Hexagonal core, ports + adapters, an API with RBAC. There's a playground where you can get a 403 on purpose. Go on.",
   },
   {
+    href: "/architecture#ai",
+    title: "AI coach + MCP",
+    text: "Rates your team from real numbers, streams its answer, switches model if 1 fails. Graded by evals in CI. Also plugs into Claude or Cursor as an MCP server.",
+  },
+  {
+    href: "/architecture#services",
+    title: "Go + Python services",
+    text: "A Go gateway that took 10 000 simulated devices without losing an event, + a Python detector that flags weird telemetry.",
+  },
+  {
     href: "https://github.com/TopGEpitech/Pokedex-Nextjs14",
     title: "Source + CI",
-    text: "Every push runs lint, type check, the tests + a prod build on GitHub Actions. Red CI, no merge.",
+    text: "Every push: lint, types, 150+ tests, go + python tests, AI evals, docker, cypress + axe, k6. Red CI, no merge.",
   },
 ];
 
