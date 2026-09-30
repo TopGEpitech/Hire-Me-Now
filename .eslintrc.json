@@ -1,0 +1,42 @@
+{
+  "extends": "next/core-web-vitals",
+  "overrides": [
+    {
+      "files": ["src/core/**/*.ts"],
+      "excludedFiles": ["**/*.test.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["next", "next/*", "react", "react-dom", "zod", "framer-motion", "node:*"],
+                "message": "src/core stays framework free. Need something from outside? Add a port in core/application/ports.ts."
+              },
+              {
+                "group": ["@/adapters/*", "@/composition/*", "@/app/*", "@/ui/*"],
+                "message": "Dependencies point inward. The core never imports adapters, ui or wiring."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/ui/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@/adapters/*"],
+                "message": "UI gets adapters through @/composition, not directly."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

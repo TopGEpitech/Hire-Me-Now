@@ -1,9 +1,37 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-    images: {
-        domains: ['raw.githubusercontent.com'],
-    },
-};
 
+// basic hardening for every response. no CSP yet bcs framer-motion + next inline styles
+// would need nonces, that's on the todo list
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+];
+
+const nextConfig = {
+  poweredByHeader: false,
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "raw.githubusercontent.com",
+        pathname: "/PokeAPI/sprites/**",
+      },
+    ],
+  },
+  async headers() {
+    return [{ source: "/:path*", headers: securityHeaders }];
+  },
+  // the old routes, so links from before the rename still work
+  async redirects() {
+    return [
+      { source: "/pokemon", destination: "/pokedex", permanent: true },
+      { source: "/pokemon/:name", destination: "/pokedex/:name", permanent: true },
+      { source: "/fight", destination: "/battle", permanent: true },
+      { source: "/fight/ia", destination: "/battle/arena", permanent: true },
+    ];
+  },
+};
 
 export default nextConfig;
